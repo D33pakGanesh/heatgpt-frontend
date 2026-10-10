@@ -1,12 +1,12 @@
-import { useState, useCallback, useRef } from 'react'
+import { Suspense, lazy, useState, useCallback, useRef } from 'react'
 import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query'
 import L from 'leaflet'
 import MapView from './components/MapView'
-import SidePanel from './components/SidePanel'
 import SymbologyPanel, { SymbologySettings, BasemapType } from './components/SymbologyPanel'
 import MapControls from './components/MapControls'
 
 const queryClient = new QueryClient()
+const SidePanel = lazy(() => import('./components/SidePanel'))
 
 type TileLayer = {
   url: string
@@ -121,12 +121,14 @@ function AppInner() {
         onBasemapChange={setBasemap}
         headerHeight={HEADER_HEIGHT}
       />
-      <SidePanel
-        lgaId={selectedLgaId}
-        onCollapse={setPanelCollapsed}
-        onTileLayerChange={handleTileLayerChange}
-        headerHeight={HEADER_HEIGHT}
-      />
+      <Suspense fallback={null}>
+        <SidePanel
+          lgaId={selectedLgaId}
+          onCollapse={setPanelCollapsed}
+          onTileLayerChange={handleTileLayerChange}
+          headerHeight={HEADER_HEIGHT}
+        />
+      </Suspense>
     </>
   )
 }

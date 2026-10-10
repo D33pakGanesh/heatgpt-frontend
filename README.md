@@ -20,7 +20,7 @@ This repository is the standalone frontend for `D33pakGanesh/heatgpt-frontend`. 
 - Leaflet
 - TanStack Query
 - Recharts
-- Tailwind CSS base configuration
+- Plain CSS with Autoprefixer
 
 ## Architecture
 
@@ -71,9 +71,8 @@ Current verification on October 10, 2026:
 
 - `npm run typecheck` passes.
 - `npm run build` passes.
-- Vite reports a chunk-size warning for the bundled map/chart UI.
-- Production dependency audit reports 0 vulnerabilities.
-- Full dependency audit reports 9 dev-tooling vulnerabilities through Vite/Tailwind transitive dependencies.
+- Vite production build completes without chunk-size warnings after lazy-loading the side panel/chart bundle.
+- `npm audit` reports 0 vulnerabilities.
 
 ## Known Limitations
 
@@ -84,4 +83,6 @@ Current verification on October 10, 2026:
 
 ## Development History
 
-The original private HeatGPT repository shows frontend code present in the initial verifiable commit on April 27, 2026. A public Funnel-oriented update was added on June 9, 2026. This repository was prepared as a standalone public-release tree on October 10, 2026 using a fresh history to avoid publishing private repository metadata or sensitive configuration.
+- April 27, 2026: the original private Git history begins with frontend code already present.
+- June 9, 2026: public/Funnel deployment work is recorded in the original private history.
+- October 10, 2026: this standalone public-release repository was separated, cleaned, documented, and committed with a fresh history.
