@@ -5,7 +5,10 @@
   "private": true,
   "scripts": {
     "dev": "vite",
+    "data:abs-lgas": "node scripts/download-abs-lga-geojson.mjs",
     "tiles:lgas": "bash scripts/generate-lga-pmtiles.sh",
+    "tiles:validate": "node scripts/validate-lga-pmtiles.mjs",
+    "test:e2e": "playwright test",
     "typecheck": "tsc --noEmit",
     "build": "vite build",
     "preview": "vite preview"
@@ -20,6 +23,7 @@
     "recharts": "^2.10.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.64.0",
     "@types/react": "^18.2.45",
     "@types/react-dom": "^18.2.18",
     "@vitejs/plugin-react": "^6.1.2",

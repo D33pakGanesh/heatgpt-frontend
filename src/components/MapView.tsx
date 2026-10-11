@@ -4,12 +4,15 @@ import { useQuery } from '@tanstack/react-query'
 import * as maplibregl from 'maplibre-gl'
 import {
   addProtocol,
+  setWorkerUrl,
   type GeoJSONSource,
   type LngLatBoundsLike,
   type MapGeoJSONFeature,
   type MapLayerMouseEvent,
   type MapLayerTouchEvent,
+  type PointLike,
 } from 'maplibre-gl'
+import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url'
 import { Protocol } from 'pmtiles'
 import type { SymbologySettings, BasemapType } from './SymbologyPanel'
 import { apiUrl } from '../api'
@@ -35,6 +38,13 @@ const RASTER_LAYER = 'gee-raster-layer'
 const lgaPmtilesUrl = import.meta.env.VITE_LGA_PMTILES_URL?.trim()
 const lgaPmtilesLayer = import.meta.env.VITE_LGA_PMTILES_LAYER?.trim() || 'lgas'
 let pmtilesProtocolRegistered = false
+let workerUrlRegistered = false
+
+function registerMapLibreWorker() {
+  if (workerUrlRegistered) return
+  setWorkerUrl(maplibreWorkerUrl)
+  workerUrlRegistered = true
+}
 
 function getBasemapStyle(basemap: BasemapType): maplibregl.StyleSpecification {
   const satellite = basemap === 'satellite' || basemap === 'hybrid'
@@ -142,6 +152,7 @@ export default function MapView({
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return
+    registerMapLibreWorker()
     if (usingPmtiles) registerPmtilesProtocol()
 
     const map = new maplibregl.Map({
@@ -158,6 +169,7 @@ export default function MapView({
     map.addControl(new maplibregl.ScaleControl({ maxWidth: 120, unit: 'metric' }), 'bottom-left')
     map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right')
     map.fitBounds(MELBOURNE_BOUNDS, { padding: 20, duration: 0 })
+    ;(window as any).__heatgptMap = map
     mapRefCallback?.(map)
 
     const resize = () => map.resize()
@@ -169,6 +181,7 @@ export default function MapView({
       window.removeEventListener('orientationchange', resize)
       geeLayerRef.current?.remove()
       map.remove()
+      delete (window as any).__heatgptMap
       mapRef.current = null
       mapRefCallback?.(null)
     }
@@ -178,59 +191,73 @@ export default function MapView({
     const map = mapRef.current
     if (!map) return
 
+    let listenersAttached = false
+
     const addLgaLayers = () => {
-      if (map.getLayer(LGA_FILL_LAYER)) return
-      if (usingPmtiles) {
-        map.addSource(LGA_SOURCE, {
-          type: 'vector',
-          url: `pmtiles://${lgaPmtilesUrl}`,
-          promoteId: { [lgaPmtilesLayer]: 'lga_id' },
+      const sourceLayer = usingPmtiles ? lgaPmtilesLayer : undefined
+      let lastSelectionAt = 0
+      if (!map.getLayer(LGA_FILL_LAYER)) {
+        if (usingPmtiles) {
+          map.addSource(LGA_SOURCE, {
+            type: 'vector',
+            url: `pmtiles://${lgaPmtilesUrl}`,
+            promoteId: { [lgaPmtilesLayer]: 'lga_id' },
+          })
+        } else {
+          map.addSource(LGA_SOURCE, {
+            type: 'geojson',
+            data: geojsonData,
+            promoteId: 'lga_id',
+          })
+        }
+
+        map.addLayer({
+          id: LGA_FILL_LAYER,
+          type: 'fill',
+          source: LGA_SOURCE,
+          ...(sourceLayer ? { 'source-layer': sourceLayer } : {}),
+          paint: {
+            'fill-color': symbologyRef.current?.solidColor ?? '#3b82f6',
+            'fill-opacity': activeTileLayerRef.current ? 0.05 : symbologyRef.current?.fillOpacity ?? 0.7,
+          },
         })
-      } else {
-        map.addSource(LGA_SOURCE, {
-          type: 'geojson',
-          data: geojsonData,
-          promoteId: 'lga_id',
+        map.addLayer({
+          id: LGA_LINE_LAYER,
+          type: 'line',
+          source: LGA_SOURCE,
+          ...(sourceLayer ? { 'source-layer': sourceLayer } : {}),
+          paint: {
+            'line-color': symbologyRef.current?.strokeColor ?? '#666666',
+            'line-width': activeTileLayerRef.current ? 0.3 : symbologyRef.current?.strokeWeight ?? 1,
+          },
+        })
+        map.addLayer({
+          id: LGA_SELECTED_LAYER,
+          type: 'line',
+          source: LGA_SOURCE,
+          ...(sourceLayer ? { 'source-layer': sourceLayer } : {}),
+          filter: ['==', ['get', 'lga_id'], selectedLgaIdRef.current ?? ''],
+          paint: {
+            'line-color': '#f97316',
+            'line-width': 3,
+            'line-opacity': 0.95,
+          },
         })
       }
 
-      const sourceLayer = usingPmtiles ? lgaPmtilesLayer : undefined
-      map.addLayer({
-        id: LGA_FILL_LAYER,
-        type: 'fill',
-        source: LGA_SOURCE,
-        ...(sourceLayer ? { 'source-layer': sourceLayer } : {}),
-        paint: {
-          'fill-color': symbologyRef.current?.solidColor ?? '#3b82f6',
-          'fill-opacity': activeTileLayerRef.current ? 0.05 : symbologyRef.current?.fillOpacity ?? 0.7,
-        },
-      })
-      map.addLayer({
-        id: LGA_LINE_LAYER,
-        type: 'line',
-        source: LGA_SOURCE,
-        ...(sourceLayer ? { 'source-layer': sourceLayer } : {}),
-        paint: {
-          'line-color': symbologyRef.current?.strokeColor ?? '#666666',
-          'line-width': activeTileLayerRef.current ? 0.3 : symbologyRef.current?.strokeWeight ?? 1,
-        },
-      })
-      map.addLayer({
-        id: LGA_SELECTED_LAYER,
-        type: 'line',
-        source: LGA_SOURCE,
-        ...(sourceLayer ? { 'source-layer': sourceLayer } : {}),
-        filter: ['==', ['get', 'lga_id'], selectedLgaIdRef.current ?? ''],
-        paint: {
-          'line-color': '#f97316',
-          'line-width': 3,
-          'line-opacity': 0.95,
-        },
-      })
-
-      const selectFeature = async (event: MapLayerMouseEvent | MapLayerTouchEvent) => {
-        const feature = event.features?.[0] ?? map.queryRenderedFeatures(event.point, { layers: [LGA_FILL_LAYER] })[0]
+      const selectFeatureAtPoint = async (point: PointLike, eventFeatures?: MapGeoJSONFeature[]) => {
+        const now = Date.now()
+        if (now - lastSelectionAt < 250) return
+        const hitSize = 12
+        const pointLike = point as { x: number; y: number }
+        const feature = eventFeatures?.[0] ??
+          map.queryRenderedFeatures(point, { layers: [LGA_FILL_LAYER] })[0] ??
+          map.queryRenderedFeatures([
+          [pointLike.x - hitSize, pointLike.y - hitSize],
+          [pointLike.x + hitSize, pointLike.y + hitSize],
+        ], { layers: [LGA_FILL_LAYER] })[0]
         if (!feature) return
+        lastSelectionAt = now
         const lgaId = getFeatureId(feature)
         if (!lgaId) return
         const fallback = lgaLookupRef.current.get(lgaId) ?? (feature as unknown as LgaFeature)
@@ -241,18 +268,57 @@ export default function MapView({
         if (bounds) map.fitBounds(bounds, { padding: 48, maxZoom: 13 })
       }
 
-      map.on('click', LGA_FILL_LAYER, selectFeature)
-      map.on('touchend', LGA_FILL_LAYER, selectFeature)
-      map.on('mouseenter', LGA_FILL_LAYER, () => { map.getCanvas().style.cursor = 'pointer' })
-      map.on('mouseleave', LGA_FILL_LAYER, () => { map.getCanvas().style.cursor = '' })
+      const selectFeatureFromMap = (event: MapLayerMouseEvent | MapLayerTouchEvent) => {
+        void selectFeatureAtPoint(event.point)
+      }
+      const selectFeatureFromLayer = (event: MapLayerMouseEvent | MapLayerTouchEvent) => {
+        void selectFeatureAtPoint(event.point, event.features)
+      }
+      const selectFeatureFromTouch = (event: TouchEvent) => {
+        const touch = event.changedTouches[0]
+        if (!touch) return
+        const rect = map.getCanvas().getBoundingClientRect()
+        void selectFeatureAtPoint([touch.clientX - rect.left, touch.clientY - rect.top])
+      }
+      const setPointerCursor = () => { map.getCanvas().style.cursor = 'pointer' }
+      const clearPointerCursor = () => { map.getCanvas().style.cursor = '' }
+
+      if (!listenersAttached) {
+        map.on('click', selectFeatureFromMap)
+        map.on('touchend', LGA_FILL_LAYER, selectFeatureFromLayer)
+        map.on('touchend', selectFeatureFromMap)
+        map.getCanvas().addEventListener('touchend', selectFeatureFromTouch, { passive: true })
+        map.on('mouseenter', LGA_FILL_LAYER, setPointerCursor)
+        map.on('mouseleave', LGA_FILL_LAYER, clearPointerCursor)
+        listenersAttached = true
+        ;(window as any).__heatgptLgaSelectionReady = true
+      }
+
+      return () => {
+        if (!listenersAttached) return
+        map.off('click', selectFeatureFromMap)
+        map.off('touchend', LGA_FILL_LAYER, selectFeatureFromLayer)
+        map.off('touchend', selectFeatureFromMap)
+        map.getCanvas().removeEventListener('touchend', selectFeatureFromTouch)
+        map.off('mouseenter', LGA_FILL_LAYER, setPointerCursor)
+        map.off('mouseleave', LGA_FILL_LAYER, clearPointerCursor)
+        listenersAttached = false
+        delete (window as any).__heatgptLgaSelectionReady
+      }
     }
 
-    map.on('style.load', addLgaLayers)
-    if (map.isStyleLoaded()) addLgaLayers()
-    else map.once('load', addLgaLayers)
+    let removeLayerListeners: (() => void) | undefined
+    const addLayersAndListeners = () => {
+      removeLayerListeners = addLgaLayers()
+    }
+
+    map.on('style.load', addLayersAndListeners)
+    if (map.isStyleLoaded()) addLayersAndListeners()
+    else map.once('load', addLayersAndListeners)
 
     return () => {
-      map.off('style.load', addLgaLayers)
+      map.off('style.load', addLayersAndListeners)
+      removeLayerListeners?.()
     }
   }, [usingPmtiles, geojsonData, onLgaSelect])
 

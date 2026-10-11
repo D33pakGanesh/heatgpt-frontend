@@ -8,24 +8,35 @@ LAYER="${LAYER:-lgas}"
 GEOJSON="$OUT_DIR/lga-boundaries-$VERSION.geojson"
 PMTILES="$OUT_DIR/lga-boundaries-$VERSION.pmtiles"
 LATEST="$OUT_DIR/lga-boundaries.pmtiles"
-
-if [[ -z "${DATABASE_URL:-}" ]]; then
-  echo "DATABASE_URL is required and should point at a non-production PostGIS database." >&2
-  exit 1
-fi
+SOURCE_GEOJSON="${SOURCE_GEOJSON:-}"
 
 command -v ogr2ogr >/dev/null || { echo "ogr2ogr is required (GDAL)." >&2; exit 1; }
 command -v tippecanoe >/dev/null || { echo "tippecanoe is required." >&2; exit 1; }
 
 mkdir -p "$OUT_DIR"
 
-ogr2ogr \
-  -f GeoJSON "$GEOJSON" \
-  "PG:$DATABASE_URL" \
-  -sql "SELECT lga_id, lga_name, state, ST_MakeValid(geom)::geometry(MultiPolygon, 4326) AS geom FROM lgas" \
-  -nln "$LAYER" \
-  -t_srs EPSG:4326 \
-  -lco RFC7946=YES
+if [[ -n "$SOURCE_GEOJSON" ]]; then
+  ogr2ogr \
+    -f GeoJSON "$GEOJSON" \
+    "$SOURCE_GEOJSON" \
+    -nln "$LAYER" \
+    -t_srs EPSG:4326 \
+    -lco RFC7946=YES \
+    -select lga_id,lga_name,state,source,source_year,source_license
+else
+  if [[ -z "${DATABASE_URL:-}" ]]; then
+    echo "DATABASE_URL or SOURCE_GEOJSON is required. Use a non-production PostGIS database, or a licensed source GeoJSON." >&2
+    exit 1
+  fi
+
+  ogr2ogr \
+    -f GeoJSON "$GEOJSON" \
+    "PG:$DATABASE_URL" \
+    -sql "SELECT lga_id, lga_name, state, ST_MakeValid(geom)::geometry(MultiPolygon, 4326) AS geom FROM lgas" \
+    -nln "$LAYER" \
+    -t_srs EPSG:4326 \
+    -lco RFC7946=YES
+fi
 
 tippecanoe \
   -o "$PMTILES" \

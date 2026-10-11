@@ -1,5 +1,11 @@
 node_modules/
 dist/
+test-results/
+playwright-report/
+public/data/*.geojson
+public/data/*.pmtiles
+public/data/*.json
+!public/data/.gitkeep
 .env
 .env.*
 !.env.example
