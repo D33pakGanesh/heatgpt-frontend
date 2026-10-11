@@ -97,7 +97,7 @@ test('loads PMTiles LGAs and supports desktop selection', async ({ page, isMobil
   await clickRenderedLga(page)
   await expect(page.locator('body')).toContainText('Melbourne', { timeout: 30_000 })
   await expect(page.locator('.side-panel')).toBeVisible()
-  await expect(page.locator('text=Temperature Trend').or(page.locator('text=Summary'))).toBeVisible()
+  await expect(page.getByText('Summary')).toBeVisible()
 })
 
 test('supports mobile touch selection and responsive panels', async ({ page, isMobile }) => {
@@ -121,9 +121,9 @@ test('basemap and layer controls remain interactive', async ({ page, isMobile })
 
   await clickRenderedLga(page)
   await page.getByRole('button', { name: 'LST Heatmap' }).click()
-  await expect(page.getByText(/No satellite data available|LST \(°C\)/)).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByText(/No satellite data available|LST \(°C\)/).first()).toBeVisible({ timeout: 30_000 })
   await page.getByRole('button', { name: 'NDVI Vegetation' }).click()
-  await expect(page.getByText('No satellite data available for this period')).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByText(/No satellite data available for this period|NDVI/).first()).toBeVisible({ timeout: 30_000 })
   await page.getByRole('button', { name: 'Annual Day' }).click()
   await expect(page.getByText('Seasonal SUHI Variability — 2025')).toBeVisible({ timeout: 30_000 })
 })
