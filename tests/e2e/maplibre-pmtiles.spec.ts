@@ -88,7 +88,7 @@ test('loads PMTiles LGAs and supports desktop selection', async ({ page, isMobil
   test.skip(isMobile, 'Desktop-only mouse test')
   const pmtilesResponses: number[] = []
   page.on('response', response => {
-    if (response.url().includes('/lga-boundaries.pmtiles')) pmtilesResponses.push(response.status())
+    if (response.url().includes('.pmtiles')) pmtilesResponses.push(response.status())
   })
 
   await waitForMap(page)

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -55,6 +55,7 @@ function getRiskBadge(uhi: number) {
 }
 
 const PANEL_WIDTH = 460
+type MobileSheetState = 'collapsed' | 'half' | 'expanded'
 
 // Design tokens
 const T = {
@@ -83,6 +84,8 @@ function Btn({ active, loading: spin, onClick, children }: { active: boolean; lo
 
 export default function SidePanel({ lgaId, onCollapse, onTileLayerChange, headerHeight = 0 }: SidePanelProps) {
   const [collapsed, setCollapsed] = useState(true)
+  const [isMobile, setIsMobile] = useState(false)
+  const [mobileSheetState, setMobileSheetState] = useState<MobileSheetState>('collapsed')
   const [hasData, setHasData] = useState(false)
   const [timespan, setTimespan] = useState<Timespan>('30d')
   const [activeLayer, setActiveLayer] = useState<'lst' | 'ndvi' | null>(null)
@@ -92,24 +95,48 @@ export default function SidePanel({ lgaId, onCollapse, onTileLayerChange, header
   const [showSaved, setShowSaved] = useState(false)
   const [suhiMode, setSuhiMode] = useState<SuhiMode | 'none'>('none')
   const [suhiYear, setSuhiYear] = useState<number>(new Date().getFullYear() - 1)
+  const dragStartY = useRef<number | null>(null)
 
   const dateRange = computeDateRange(timespan)
   const currentYear = new Date().getFullYear()
   const yearOptions = Array.from({ length: currentYear - 2000 + 1 }, (_, i) => currentYear - i)
 
+  const panelIsCollapsed = isMobile ? mobileSheetState === 'collapsed' : collapsed
+
   useEffect(() => {
-    setCollapsed(true); setHasData(false); setActiveLayer(null)
+    const mq = window.matchMedia('(max-width: 720px), (pointer: coarse)')
+    const updateMobile = () => setIsMobile(mq.matches || window.innerWidth <= 720)
+    updateMobile()
+    mq.addEventListener('change', updateMobile)
+    window.visualViewport?.addEventListener('resize', updateMobile)
+    return () => {
+      mq.removeEventListener('change', updateMobile)
+      window.visualViewport?.removeEventListener('resize', updateMobile)
+    }
+  }, [])
+
+  useEffect(() => {
+    setCollapsed(true); setMobileSheetState('collapsed'); setHasData(false); setActiveLayer(null)
     setVizDateRange(null); setVizStart(''); setVizEnd(''); setTileError(null)
     setSuhiMode('none'); onTileLayerChange(null)
   }, [lgaId])
-  useEffect(() => { onCollapse(collapsed) }, [collapsed])
+  useEffect(() => { onCollapse(panelIsCollapsed) }, [panelIsCollapsed, onCollapse])
+  useEffect(() => {
+    const id = window.setTimeout(() => window.dispatchEvent(new Event('resize')), 320)
+    return () => window.clearTimeout(id)
+  }, [collapsed, mobileSheetState, isMobile])
 
   const { data: heatStats, isLoading, isError } = useQuery<HeatStats>({
     queryKey: ['heat', lgaId, dateRange.start, dateRange.end],
     queryFn: () => fetch(apiUrl(`/api/lga/${lgaId}/heat?start=${dateRange.start}&end=${dateRange.end}`)).then(r => { if (!r.ok) throw new Error(); return r.json() }),
     enabled: lgaId !== null,
   })
-  useEffect(() => { if (heatStats && !hasData) { setHasData(true); setCollapsed(false) } }, [heatStats])
+  useEffect(() => {
+    if (!heatStats || hasData) return
+    setHasData(true)
+    if (isMobile) setMobileSheetState('half')
+    else setCollapsed(false)
+  }, [heatStats, hasData, isMobile])
 
   const tileQueryRange = vizDateRange ?? dateRange
   const { data: tileData, isFetching: isTileFetching, isError: isTileError } = useQuery<{ tileUrl: string; bbox?: any }>({
@@ -172,6 +199,20 @@ export default function SidePanel({ lgaId, onCollapse, onTileLayerChange, header
   if (lgaId === null) return null
 
   const skel = { backgroundColor: '#f1f5f9', borderRadius: '8px', height: '68px', marginBottom: '10px', animation: 'pulse 1.5s ease-in-out infinite' }
+  const sheetTitle = heatStats?.lgaName ?? 'Loading LGA'
+
+  function setMobileState(next: MobileSheetState) {
+    setMobileSheetState(next)
+    if (next === 'collapsed') setCollapsed(true)
+  }
+
+  function handleDragEnd(clientY: number) {
+    if (dragStartY.current == null) return
+    const delta = clientY - dragStartY.current
+    dragStartY.current = null
+    if (delta > 48) setMobileState(mobileSheetState === 'expanded' ? 'half' : 'collapsed')
+    else if (delta < -48) setMobileState(mobileSheetState === 'collapsed' ? 'half' : 'expanded')
+  }
 
   return (
     <>
@@ -190,13 +231,51 @@ export default function SidePanel({ lgaId, onCollapse, onTileLayerChange, header
       }}>{collapsed ? '‹' : '›'}</button>
 
       {/* Panel */}
-      <div className="side-panel" style={{
+      <div
+        className="side-panel"
+        data-mobile-state={mobileSheetState}
+        data-testid="mobile-bottom-sheet"
+        onTouchStart={event => event.stopPropagation()}
+        onTouchMove={event => event.stopPropagation()}
+        onPointerMove={event => { if (dragStartY.current != null) event.preventDefault() }}
+        style={{
         position: 'fixed', right: collapsed ? `-${PANEL_WIDTH}px` : '0px', top: `${headerHeight}px`,
         height: `calc(100vh - ${headerHeight}px)`, width: `${PANEL_WIDTH}px`, backgroundColor: '#fff',
         borderLeft: '1px solid #e2e8f0', boxShadow: '-6px 0 24px rgba(0,0,0,0.08)',
         zIndex: 9999, overflowY: 'auto', padding: '24px 22px', boxSizing: 'border-box',
         transition: 'right 0.3s ease', fontFamily: 'inherit',
       }}>
+        <div className="mobile-sheet-chrome">
+          <button
+            type="button"
+            className="mobile-sheet-handle"
+            data-testid="mobile-sheet-handle"
+            aria-label="Drag panel"
+            onClick={() => setMobileState(mobileSheetState === 'collapsed' ? 'half' : 'collapsed')}
+            onPointerDown={event => {
+              dragStartY.current = event.clientY
+              event.currentTarget.setPointerCapture(event.pointerId)
+            }}
+            onPointerUp={event => handleDragEnd(event.clientY)}
+            onPointerCancel={() => { dragStartY.current = null }}
+          >
+            <span />
+          </button>
+          <div className="mobile-sheet-title-row">
+            <div>
+              <div className="mobile-sheet-eyebrow">Selected LGA</div>
+              <div className="mobile-sheet-title">{sheetTitle}</div>
+            </div>
+            <div className="mobile-sheet-actions">
+              <button type="button" onClick={() => setMobileState('collapsed')} aria-label="Minimise panel">Minimise</button>
+              <button type="button" onClick={() => setMobileState(mobileSheetState === 'expanded' ? 'half' : 'expanded')} aria-label={mobileSheetState === 'expanded' ? 'Half expand panel' : 'Expand panel'}>
+                {mobileSheetState === 'expanded' ? 'Half' : 'Expand'}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="side-panel-content">
 
         {/* Timespan tabs */}
         <div style={{ display: 'flex', gap: '4px', marginBottom: '20px', backgroundColor: '#f8fafc', borderRadius: '8px', padding: '3px' }}>
@@ -446,6 +525,7 @@ export default function SidePanel({ lgaId, onCollapse, onTileLayerChange, header
             <ChatInterface lgaId={lgaId} heatStats={heatStats} />
           </>
         )}
+        </div>
       </div>
     </>
   )
