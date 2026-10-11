@@ -6,6 +6,7 @@ public/data/*.geojson
 public/data/*.pmtiles
 public/data/*.json
 !public/data/.gitkeep
+!public/data/lga-boundaries-abs-2021.pmtiles
 .env
 .env.*
 !.env.example
