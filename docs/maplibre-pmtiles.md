@@ -1,32 +1,32 @@
 # MapLibre GL JS + PMTiles Notes
 
-This branch replaces the Leaflet map runtime with MapLibre GL JS. LGA drawing and picking can use a PMTiles vector archive when `VITE_LGA_PMTILES_URL` is configured. Development keeps a GeoJSON fallback through `/api/lgas` so the app still runs without a generated archive.
+The frontend uses MapLibre GL JS for map rendering and a PMTiles vector archive for LGA drawing and hit testing. Development keeps a GeoJSON fallback through `/api/lgas` so the app can still run without a local archive.
 
 ## Runtime Configuration
 
-- `VITE_LGA_PMTILES_URL=/data/lga-boundaries.pmtiles`
+- `VITE_LGA_PMTILES_URL=/data/lga-boundaries-abs-2021.pmtiles`
 - `VITE_LGA_PMTILES_LAYER=lgas`
 
 PMTiles are used only for drawing, styling and hit testing. Complete selected geometry is fetched from `GET /api/lga/:id/geometry` because vector tile features may be simplified, clipped at tile boundaries and split across tiles.
 
 ## Generate PMTiles
 
-Run against a non-production PostGIS database:
+Run against a non-production PostGIS database when regenerating an archive:
 
 ```bash
 DATABASE_URL='postgresql://user:pass@host:5432/db' npm run tiles:lgas
 ```
 
-The script exports `lga_id`, `lga_name`, `state` and valid EPSG:4326 multipolygon geometry to GeoJSON, then builds `public/data/lga-boundaries-YYYYMMDD.pmtiles` with layer name `lgas` and a stable `public/data/lga-boundaries.pmtiles` symlink.
+The script exports `lga_id`, `lga_name`, `state` and valid EPSG:4326 multipolygon geometry to GeoJSON, then builds a PMTiles archive with layer name `lgas`.
 
-Do not commit production dumps or restricted source data. Confirm the redistribution licence for the LGA source dataset before committing a public `.pmtiles` archive. If redistribution is not permitted, keep the archive in staging/object storage and commit only development fixtures.
+Do not commit production dumps or restricted source data. The checked-in `public/data/lga-boundaries-abs-2021.pmtiles` archive is derived from the ABS ASGS Edition 3 LGA 2021 digital boundary files and is documented in `public/data/README.md`.
 
 ## Static Hosting
 
 PMTiles should be served as a static file with HTTP Range support. Nginx file serving supports Range requests for static files by default; verify with:
 
 ```bash
-curl -I -H 'Range: bytes=0-1023' https://example.com/data/lga-boundaries.pmtiles
+curl -I -H 'Range: bytes=0-1023' https://example.com/data/lga-boundaries-abs-2021.pmtiles
 ```
 
 Expected response: `206 Partial Content` with `Accept-Ranges: bytes`.
@@ -42,8 +42,6 @@ location /data/ {
   try_files $uri =404;
 }
 ```
-
-Do not modify production Nginx until this branch has been validated in staging.
 
 ## Benchmark Checklist
 
