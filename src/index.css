@@ -28,6 +28,31 @@ canvas {
   display: block;
 }
 
+body {
+  overflow: hidden;
+}
+
+.heat-map {
+  height: 100%;
+  width: 100%;
+  touch-action: none;
+}
+
+.maplibregl-canvas-container,
+.maplibregl-canvas {
+  touch-action: none;
+}
+
+.maplibregl-ctrl-top-left {
+  top: 12px;
+  left: 12px;
+}
+
+.maplibregl-ctrl-group button {
+  min-width: 34px;
+  min-height: 34px;
+}
+
 /* Design tokens */
 :root {
   --color-bg:          #ffffff;
@@ -78,4 +103,93 @@ input[type=range]::-moz-range-thumb {
   background: #fff;
   border: 2px solid var(--color-accent);
   box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+}
+
+@media (max-width: 720px) {
+  header {
+    padding: 0 12px !important;
+  }
+
+  header span:nth-child(2) {
+    display: none !important;
+  }
+
+  header span:last-child {
+    font-size: 10px !important;
+    max-width: 42vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .maplibregl-ctrl-top-left {
+    top: 8px;
+    left: 8px;
+  }
+
+  .map-floating {
+    z-index: 1800 !important;
+  }
+
+  .map-north-arrow {
+    top: 60px !important;
+    right: 12px !important;
+  }
+
+  .map-scale-card {
+    left: 10px !important;
+    bottom: 12px !important;
+  }
+
+  .map-legend-card {
+    right: 10px !important;
+    bottom: 12px !important;
+    max-width: 44vw;
+  }
+
+  .symbology-shell {
+    top: auto !important;
+    bottom: 76px;
+    transform: none !important;
+    max-width: calc(100vw - 16px);
+  }
+
+  .symbology-panel {
+    width: min(232px, calc(100vw - 52px)) !important;
+    max-height: calc(100vh - 156px) !important;
+  }
+
+  .symbology-tab {
+    min-width: 44px;
+    min-height: 52px;
+  }
+
+  .side-panel {
+    width: min(100vw, 460px) !important;
+    right: 0 !important;
+    transform: translateX(100%);
+    transition: transform 0.3s ease !important;
+    padding: 18px 14px !important;
+  }
+
+  .side-panel[style*="right: 0px"] {
+    transform: translateX(0);
+  }
+
+  .side-panel-tab {
+    width: 44px !important;
+    height: 48px !important;
+    right: 0 !important;
+    font-size: 18px !important;
+  }
+
+  .side-panel-tab[style*="right: 460px"] {
+    right: calc(100vw - 44px) !important;
+  }
+
+  button,
+  input,
+  select {
+    min-height: 36px;
+  }
 }

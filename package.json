@@ -5,19 +5,21 @@
   "private": true,
   "scripts": {
     "dev": "vite",
+    "tiles:lgas": "bash scripts/generate-lga-pmtiles.sh",
     "typecheck": "tsc --noEmit",
     "build": "vite build",
     "preview": "vite preview"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.13.4",
-    "leaflet": "^1.9.4",
+    "@types/geojson": "^7946.0.16",
+    "maplibre-gl": "^6.13.0",
+    "pmtiles": "^4.5.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "recharts": "^2.10.0"
   },
   "devDependencies": {
-    "@types/leaflet": "^1.9.8",
     "@types/react": "^18.2.45",
     "@types/react-dom": "^18.2.18",
     "@vitejs/plugin-react": "^6.1.2",

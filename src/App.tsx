@@ -1,21 +1,12 @@
 import { Suspense, lazy, useState, useCallback, useRef } from 'react'
 import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query'
-import L from 'leaflet'
 import MapView from './components/MapView'
 import SymbologyPanel, { SymbologySettings, BasemapType } from './components/SymbologyPanel'
 import MapControls from './components/MapControls'
+import type { HeatMap, LgaFeature, TileLayer } from './mapTypes'
 
 const queryClient = new QueryClient()
 const SidePanel = lazy(() => import('./components/SidePanel'))
-
-type TileLayer = {
-  url: string
-  type: 'lst' | 'ndvi' | 'suhi'
-  bbox?: { west: number; south: number; east: number; north: number }
-  lgaGeometry?: GeoJSON.Geometry | null
-  dateRangeStart?: string
-  dateRangeEnd?: string
-}
 
 const DEFAULT_SYMBOLOGY: SymbologySettings = {
   fillOpacity: 0.7,
@@ -25,6 +16,27 @@ const DEFAULT_SYMBOLOGY: SymbologySettings = {
 }
 
 const HEADER_HEIGHT = 52
+
+function geometryBounds(geometry: GeoJSON.Geometry): [[number, number], [number, number]] | null {
+  let west = Infinity
+  let south = Infinity
+  let east = -Infinity
+  let north = -Infinity
+  const visit = (coords: any) => {
+    if (typeof coords?.[0] === 'number') {
+      const [lng, lat] = coords as GeoJSON.Position
+      west = Math.min(west, lng)
+      east = Math.max(east, lng)
+      south = Math.min(south, lat)
+      north = Math.max(north, lat)
+      return
+    }
+    coords?.forEach(visit)
+  }
+  if (geometry.type === 'GeometryCollection') geometry.geometries.forEach(g => visit((g as any).coordinates))
+  else visit((geometry as any).coordinates)
+  return Number.isFinite(west) ? [[west, south], [east, north]] : null
+}
 
 function Header({ hasSelection }: { hasSelection: boolean }) {
   return (
@@ -65,19 +77,29 @@ function AppInner() {
   const [activeTileLayer, setActiveTileLayer] = useState<TileLayer | null>(null)
   const [symbology, setSymbology] = useState<SymbologySettings>(DEFAULT_SYMBOLOGY)
   const [basemap, setBasemap] = useState<BasemapType>('map')
-  const mapRef = useRef<L.Map | null>(null)
+  const [mapInstance, setMapInstance] = useState<HeatMap | null>(null)
+  const mapRef = useRef<HeatMap | null>(null)
+  const selectedLgaGeometryRef = useRef<GeoJSON.Geometry | null>(null)
 
   const panelOpen = selectedLgaId !== null && !panelCollapsed
 
-  const handleLgaSelect = useCallback((id: string) => {
+  const handleLgaSelect = useCallback((feature: LgaFeature) => {
+    const id = feature.properties.lga_id
     setSelectedLgaId(id)
     setActiveTileLayer(null)
-    const cached = qc.getQueryData<GeoJSON.FeatureCollection>(['lgas'])
-    const feature = cached?.features.find(f => f.properties?.lga_id === id)
-    ;(window as any).__selectedLgaGeometry = feature?.geometry ?? null
+    selectedLgaGeometryRef.current = feature.geometry
+    qc.setQueryData<GeoJSON.FeatureCollection | undefined>(['lgas'], cached => {
+      if (!cached) return cached
+      return {
+        ...cached,
+        features: cached.features.map(existing =>
+          existing.properties?.lga_id === id ? feature : existing
+        ),
+      }
+    })
     if (feature?.geometry && mapRef.current) {
-      const layer = L.geoJSON(feature as GeoJSON.Feature)
-      mapRef.current.fitBounds(layer.getBounds(), { padding: [40, 40], maxZoom: 13 })
+      const bounds = geometryBounds(feature.geometry)
+      if (bounds) mapRef.current.fitBounds(bounds, { padding: 48, maxZoom: 13 })
     }
   }, [qc])
 
@@ -85,11 +107,11 @@ function AppInner() {
     if (!layer) { setActiveTileLayer(null); return }
     setActiveTileLayer({
       ...layer,
-      lgaGeometry: (window as any).__selectedLgaGeometry ?? null,
+      lgaGeometry: selectedLgaGeometryRef.current,
     })
     if (layer.bbox && mapRef.current) {
       const { west, south, east, north } = layer.bbox
-      mapRef.current.fitBounds([[south, west], [north, east]], { padding: [40, 40], maxZoom: 13 })
+      mapRef.current.fitBounds([[west, south], [east, north]], { padding: 48, maxZoom: 13 })
     }
   }, [])
 
@@ -100,16 +122,17 @@ function AppInner() {
       {/* Map pushed down by header height */}
       <div style={{ position: 'fixed', top: `${HEADER_HEIGHT}px`, left: 0, right: 0, bottom: 0 }}>
         <MapView
+          selectedLgaId={selectedLgaId}
           onLgaSelect={handleLgaSelect}
           activeTileLayer={activeTileLayer}
           symbology={symbology}
           basemap={basemap}
-          mapRefCallback={(map) => { mapRef.current = map }}
+          mapRefCallback={(map) => { mapRef.current = map; setMapInstance(map) }}
         />
       </div>
 
       <MapControls
-        mapRef={mapRef}
+        map={mapInstance}
         activeTileLayer={activeTileLayer}
         sidePanelOpen={panelOpen}
         headerHeight={HEADER_HEIGHT}

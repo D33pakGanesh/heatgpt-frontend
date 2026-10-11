@@ -47,9 +47,9 @@ export default function SymbologyPanel({ settings, onChange, basemap, onBasemapC
   const update = (patch: Partial<SymbologySettings>) => onChange({ ...settings, ...patch })
 
   return (
-    <div style={{ position: 'fixed', left: 0, top: `calc(${headerHeight}px + (100vh - ${headerHeight}px) / 2)`, transform: 'translateY(-50%)', zIndex: 2000, display: 'flex', flexDirection: 'row', alignItems: 'stretch' }}>
+    <div className="symbology-shell" style={{ position: 'fixed', left: 0, top: `calc(${headerHeight}px + (100vh - ${headerHeight}px) / 2)`, transform: 'translateY(-50%)', zIndex: 2000, display: 'flex', flexDirection: 'row', alignItems: 'stretch' }}>
       {/* Panel */}
-      <div style={{
+      <div className="symbology-panel" style={{
         backgroundColor: '#fff',
         borderRight: '1px solid #e2e8f0',
         boxShadow: '4px 0 16px rgba(0,0,0,0.10)',
@@ -129,7 +129,7 @@ export default function SymbologyPanel({ settings, onChange, basemap, onBasemapC
       </div>
 
       {/* Tab */}
-      <button onClick={() => setOpen(o => !o)} style={{
+      <button className="symbology-tab" onClick={() => setOpen(o => !o)} style={{
         writingMode: 'vertical-rl', textOrientation: 'mixed', transform: 'rotate(180deg)',
         backgroundColor: '#0f172a', color: '#fff', border: 'none',
         padding: '14px 9px', cursor: 'pointer', fontSize: '11px', fontWeight: 600,

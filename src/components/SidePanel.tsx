@@ -181,7 +181,7 @@ export default function SidePanel({ lgaId, onCollapse, onTileLayerChange, header
       `}</style>
 
       {/* Expand tab */}
-      <button onClick={() => setCollapsed(c => !c)} aria-label={collapsed ? 'Expand panel' : 'Collapse panel'} style={{
+      <button className="side-panel-tab" onClick={() => setCollapsed(c => !c)} aria-label={collapsed ? 'Expand panel' : 'Collapse panel'} style={{
         position: 'fixed', top: `calc(${headerHeight}px + (100vh - ${headerHeight}px) / 2)`, right: collapsed ? '0px' : `${PANEL_WIDTH}px`,
         transform: 'translateY(-50%)', zIndex: 10000, width: '18px', height: '52px',
         backgroundColor: '#0f172a', color: '#fff', border: 'none', borderRadius: '6px 0 0 6px',
@@ -190,7 +190,7 @@ export default function SidePanel({ lgaId, onCollapse, onTileLayerChange, header
       }}>{collapsed ? '‹' : '›'}</button>
 
       {/* Panel */}
-      <div style={{
+      <div className="side-panel" style={{
         position: 'fixed', right: collapsed ? `-${PANEL_WIDTH}px` : '0px', top: `${headerHeight}px`,
         height: `calc(100vh - ${headerHeight}px)`, width: `${PANEL_WIDTH}px`, backgroundColor: '#fff',
         borderLeft: '1px solid #e2e8f0', boxShadow: '-6px 0 24px rgba(0,0,0,0.08)',

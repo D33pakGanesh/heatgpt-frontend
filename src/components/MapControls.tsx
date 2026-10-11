@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react'
-import L from 'leaflet'
+import type { HeatMap } from '../mapTypes'
 
 interface MapControlsProps {
-  mapRef: React.MutableRefObject<L.Map | null>
+  map: HeatMap | null
   activeTileLayer?: { type: 'lst' | 'ndvi' | 'suhi' } | null
   sidePanelOpen?: boolean
   headerHeight?: number
 }
 
-function getScaleInfo(map: L.Map): { width: number; label: string } {
+function getScaleInfo(map: HeatMap): { width: number; label: string } {
   const center = map.getCenter()
   const zoom = map.getZoom()
   const metersPerPixel = (156543.03392 * Math.cos((center.lat * Math.PI) / 180)) / Math.pow(2, zoom)
@@ -53,18 +53,21 @@ const card: React.CSSProperties = {
   border: '1px solid #e2e8f0',
 }
 
-export default function MapControls({ mapRef, activeTileLayer, sidePanelOpen, headerHeight = 0 }: MapControlsProps) {
+export default function MapControls({ map, activeTileLayer, sidePanelOpen, headerHeight = 0 }: MapControlsProps) {
   const [scaleInfo, setScaleInfo] = useState<{ width: number; label: string } | null>(null)
   const offset = sidePanelOpen ? '476px' : '16px'
 
   useEffect(() => {
-    const map = mapRef.current
     if (!map) return
     const update = () => setScaleInfo(getScaleInfo(map))
     update()
-    map.on('zoomend moveend', update)
-    return () => { map.off('zoomend moveend', update) }
-  }, [mapRef.current])
+    map.on('zoomend', update)
+    map.on('moveend', update)
+    return () => {
+      map.off('zoomend', update)
+      map.off('moveend', update)
+    }
+  }, [map])
 
   const palette =
     activeTileLayer?.type === 'ndvi' ? NDVI_PALETTE :
@@ -79,7 +82,7 @@ export default function MapControls({ mapRef, activeTileLayer, sidePanelOpen, he
   return (
     <>
       {/* North arrow */}
-      <div style={{ ...card, position: 'fixed', top: `${headerHeight + 16}px`, right: offset, zIndex: 2000,
+      <div className="map-floating map-north-arrow" style={{ ...card, position: 'fixed', top: `${headerHeight + 16}px`, right: offset, zIndex: 2000,
         padding: '8px 10px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px',
         transition: 'right 0.3s ease' }}>
         <svg width="20" height="28" viewBox="0 0 24 32">
@@ -92,7 +95,7 @@ export default function MapControls({ mapRef, activeTileLayer, sidePanelOpen, he
 
       {/* Scale bar */}
       {scaleInfo && (
-        <div style={{ ...card, position: 'fixed', bottom: '24px', left: '16px', zIndex: 2000, padding: '7px 12px' }}>
+        <div className="map-floating map-scale-card" style={{ ...card, position: 'fixed', bottom: '24px', left: '16px', zIndex: 2000, padding: '7px 12px' }}>
           <div style={{ fontSize: '10px', fontWeight: 500, color: '#64748b', marginBottom: '4px', textAlign: 'center', letterSpacing: '0.02em' }}>
             {scaleInfo.label}
           </div>
@@ -106,7 +109,7 @@ export default function MapControls({ mapRef, activeTileLayer, sidePanelOpen, he
 
       {/* Legend */}
       {palette && (
-        <div style={{ ...card, position: 'fixed', bottom: '24px', right: offset, zIndex: 2000,
+        <div className="map-floating map-legend-card" style={{ ...card, position: 'fixed', bottom: '24px', right: offset, zIndex: 2000,
           padding: '12px 14px', minWidth: '110px', transition: 'right 0.3s ease' }}>
           <div style={{ fontSize: '11px', fontWeight: 700, color: '#0f172a', marginBottom: '8px', letterSpacing: '0.01em' }}>
             {legendTitle}

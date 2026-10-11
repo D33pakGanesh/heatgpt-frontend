@@ -1,29 +1,130 @@
-﻿import 'leaflet/dist/leaflet.css'
-import { useEffect, useRef } from 'react'
+import 'maplibre-gl/dist/maplibre-gl.css'
+import { useEffect, useMemo, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import L from 'leaflet'
+import * as maplibregl from 'maplibre-gl'
+import {
+  addProtocol,
+  type GeoJSONSource,
+  type LngLatBoundsLike,
+  type MapGeoJSONFeature,
+  type MapLayerMouseEvent,
+  type MapLayerTouchEvent,
+} from 'maplibre-gl'
+import { Protocol } from 'pmtiles'
 import type { SymbologySettings, BasemapType } from './SymbologyPanel'
 import { apiUrl } from '../api'
+import type { HeatMap, LgaFeature, TileLayer } from '../mapTypes'
 
 interface MapViewProps {
-  onLgaSelect: (lgaId: string) => void
-  activeTileLayer?: {
-    url: string
-    type: 'lst' | 'ndvi' | 'suhi'
-    bbox?: { west: number; south: number; east: number; north: number }
-    lgaGeometry?: GeoJSON.Geometry | null
-  } | null
+  selectedLgaId: string | null
+  onLgaSelect: (feature: LgaFeature) => void
+  activeTileLayer?: TileLayer | null
   symbology?: SymbologySettings
   basemap?: BasemapType
-  mapRefCallback?: (map: L.Map) => void
+  mapRefCallback?: (map: HeatMap | null) => void
 }
 
-export default function MapView({ onLgaSelect, activeTileLayer, symbology, basemap = 'map', mapRefCallback }: MapViewProps) {
-  const mapRef = useRef<L.Map | null>(null)
-  const mapInitialised = useRef(false)
-  const geeLayerRef = useRef<any>(null)
-  const lgaLayerRef = useRef<L.GeoJSON | null>(null)
-  const basemapLayerRef = useRef<L.TileLayer | null>(null)
+const MELBOURNE_BOUNDS: LngLatBoundsLike = [[144.4, -38.5], [145.8, -37.4]]
+const LGA_SOURCE = 'lga-boundaries'
+const LGA_FILL_LAYER = 'lga-fill'
+const LGA_LINE_LAYER = 'lga-line'
+const LGA_SELECTED_LAYER = 'lga-selected'
+const RASTER_SOURCE = 'gee-raster'
+const RASTER_LAYER = 'gee-raster-layer'
+
+const lgaPmtilesUrl = import.meta.env.VITE_LGA_PMTILES_URL?.trim()
+const lgaPmtilesLayer = import.meta.env.VITE_LGA_PMTILES_LAYER?.trim() || 'lgas'
+let pmtilesProtocolRegistered = false
+
+function getBasemapStyle(basemap: BasemapType): maplibregl.StyleSpecification {
+  const satellite = basemap === 'satellite' || basemap === 'hybrid'
+  const rasterSource = satellite
+    ? {
+        type: 'raster' as const,
+        tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
+        tileSize: 256,
+        maxzoom: 19,
+        attribution: 'Esri, Maxar, Earthstar Geographics',
+      }
+    : {
+        type: 'raster' as const,
+        tiles: [
+          'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png',
+          'https://b.tile.openstreetmap.org/{z}/{x}/{y}.png',
+          'https://c.tile.openstreetmap.org/{z}/{x}/{y}.png',
+        ],
+        tileSize: 256,
+        maxzoom: 19,
+        attribution: 'OpenStreetMap contributors',
+      }
+
+  return {
+    version: 8,
+    sources: { basemap: rasterSource },
+    layers: [{ id: 'basemap', type: 'raster', source: 'basemap' }],
+  }
+}
+
+function registerPmtilesProtocol() {
+  if (pmtilesProtocolRegistered) return
+  const protocol = new Protocol()
+  addProtocol('pmtiles', protocol.tile)
+  pmtilesProtocolRegistered = true
+}
+
+function getFeatureId(feature: MapGeoJSONFeature): string | null {
+  const value = feature.properties?.lga_id ?? feature.properties?.LGA_CODE ?? feature.properties?.id
+  return value == null ? null : String(value)
+}
+
+function geometryBounds(geometry: GeoJSON.Geometry): LngLatBoundsLike | null {
+  let west = Infinity
+  let south = Infinity
+  let east = -Infinity
+  let north = -Infinity
+  const visit = (coords: any) => {
+    if (typeof coords?.[0] === 'number') {
+      const [lng, lat] = coords as GeoJSON.Position
+      west = Math.min(west, lng)
+      east = Math.max(east, lng)
+      south = Math.min(south, lat)
+      north = Math.max(north, lat)
+      return
+    }
+    coords?.forEach(visit)
+  }
+  if (geometry.type === 'GeometryCollection') geometry.geometries.forEach(g => visit((g as any).coordinates))
+  else visit((geometry as any).coordinates)
+  return Number.isFinite(west) ? [[west, south], [east, north]] : null
+}
+
+async function fetchFullLgaFeature(lgaId: string, fallback?: LgaFeature): Promise<LgaFeature> {
+  const response = await fetch(apiUrl(`/api/lga/${encodeURIComponent(lgaId)}/geometry`))
+  if (response.ok) return response.json()
+  if (fallback?.geometry) return fallback
+  throw new Error('Failed to fetch complete LGA geometry')
+}
+
+export default function MapView({
+  selectedLgaId,
+  onLgaSelect,
+  activeTileLayer,
+  symbology,
+  basemap = 'map',
+  mapRefCallback,
+}: MapViewProps) {
+  const containerRef = useRef<HTMLDivElement | null>(null)
+  const mapRef = useRef<HeatMap | null>(null)
+  const geeLayerRef = useRef<{ remove: () => void } | null>(null)
+  const lgaLookupRef = useRef<Map<string, LgaFeature>>(new Map())
+  const selectedLgaIdRef = useRef<string | null>(selectedLgaId)
+  const symbologyRef = useRef<SymbologySettings | undefined>(symbology)
+  const activeTileLayerRef = useRef<TileLayer | null | undefined>(activeTileLayer)
+  const usingPmtiles = Boolean(lgaPmtilesUrl)
+
+  selectedLgaIdRef.current = selectedLgaId
+  symbologyRef.current = symbology
+  activeTileLayerRef.current = activeTileLayer
 
   const { data, isError } = useQuery<GeoJSON.FeatureCollection>({
     queryKey: ['lgas'],
@@ -31,46 +132,163 @@ export default function MapView({ onLgaSelect, activeTileLayer, symbology, basem
       if (!res.ok) throw new Error('Failed to fetch LGA boundaries')
       return res.json()
     }),
+    enabled: !usingPmtiles,
   })
 
+  const geojsonData = useMemo(
+    (): GeoJSON.FeatureCollection => data ?? { type: 'FeatureCollection', features: [] },
+    [data]
+  )
+
   useEffect(() => {
-    if (mapInitialised.current) return
-    mapInitialised.current = true
-    mapRef.current = L.map('map').fitBounds([[-38.5, 144.4], [-37.4, 145.8]])
-    basemapLayerRef.current = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© OpenStreetMap contributors',
+    if (!containerRef.current || mapRef.current) return
+    if (usingPmtiles) registerPmtilesProtocol()
+
+    const map = new maplibregl.Map({
+      container: containerRef.current,
+      style: getBasemapStyle(basemap),
+      attributionControl: false,
+      dragRotate: false,
+      pitchWithRotate: false,
+      touchPitch: false,
+      cooperativeGestures: false,
     })
-    basemapLayerRef.current.addTo(mapRef.current)
-    if (mapRefCallback) mapRefCallback(mapRef.current)
+    mapRef.current = map
+    map.addControl(new maplibregl.NavigationControl({ visualizePitch: false }), 'top-left')
+    map.addControl(new maplibregl.ScaleControl({ maxWidth: 120, unit: 'metric' }), 'bottom-left')
+    map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right')
+    map.fitBounds(MELBOURNE_BOUNDS, { padding: 20, duration: 0 })
+    mapRefCallback?.(map)
+
+    const resize = () => map.resize()
+    window.addEventListener('resize', resize)
+    window.addEventListener('orientationchange', resize)
+
+    return () => {
+      window.removeEventListener('resize', resize)
+      window.removeEventListener('orientationchange', resize)
+      geeLayerRef.current?.remove()
+      map.remove()
+      mapRef.current = null
+      mapRefCallback?.(null)
+    }
   }, [])
 
   useEffect(() => {
-    if (!data || !mapRef.current) return
-    lgaLayerRef.current = L.geoJSON(data, {
-      style: feature => ({
-        fillColor: symbology?.solidColor ?? '#3b82f6',
-        fillOpacity: symbology?.fillOpacity ?? 0.7,
-        weight: symbology?.strokeWeight ?? 1,
-        color: symbology?.strokeColor ?? '#666',
-      }),
-      onEachFeature: (feature, layer) => {
-        layer.on('click', () => onLgaSelect(feature.properties.lga_id))
-      },
-    }).addTo(mapRef.current)
-  }, [data, onLgaSelect])
+    const map = mapRef.current
+    if (!map) return
 
-  // Re-apply symbology when settings change
-  useEffect(() => {
-    if (!lgaLayerRef.current || !symbology) return
-    lgaLayerRef.current.eachLayer((layer: any) => {
-      layer.setStyle({
-        fillColor: symbology.solidColor,
-        fillOpacity: activeTileLayer ? 0.05 : symbology.fillOpacity,
-        weight: activeTileLayer ? 0.3 : symbology.strokeWeight,
-        color: symbology.strokeColor,
+    const addLgaLayers = () => {
+      if (map.getLayer(LGA_FILL_LAYER)) return
+      if (usingPmtiles) {
+        map.addSource(LGA_SOURCE, {
+          type: 'vector',
+          url: `pmtiles://${lgaPmtilesUrl}`,
+          promoteId: { [lgaPmtilesLayer]: 'lga_id' },
+        })
+      } else {
+        map.addSource(LGA_SOURCE, {
+          type: 'geojson',
+          data: geojsonData,
+          promoteId: 'lga_id',
+        })
+      }
+
+      const sourceLayer = usingPmtiles ? lgaPmtilesLayer : undefined
+      map.addLayer({
+        id: LGA_FILL_LAYER,
+        type: 'fill',
+        source: LGA_SOURCE,
+        ...(sourceLayer ? { 'source-layer': sourceLayer } : {}),
+        paint: {
+          'fill-color': symbologyRef.current?.solidColor ?? '#3b82f6',
+          'fill-opacity': activeTileLayerRef.current ? 0.05 : symbologyRef.current?.fillOpacity ?? 0.7,
+        },
       })
-    })
+      map.addLayer({
+        id: LGA_LINE_LAYER,
+        type: 'line',
+        source: LGA_SOURCE,
+        ...(sourceLayer ? { 'source-layer': sourceLayer } : {}),
+        paint: {
+          'line-color': symbologyRef.current?.strokeColor ?? '#666666',
+          'line-width': activeTileLayerRef.current ? 0.3 : symbologyRef.current?.strokeWeight ?? 1,
+        },
+      })
+      map.addLayer({
+        id: LGA_SELECTED_LAYER,
+        type: 'line',
+        source: LGA_SOURCE,
+        ...(sourceLayer ? { 'source-layer': sourceLayer } : {}),
+        filter: ['==', ['get', 'lga_id'], selectedLgaIdRef.current ?? ''],
+        paint: {
+          'line-color': '#f97316',
+          'line-width': 3,
+          'line-opacity': 0.95,
+        },
+      })
+
+      const selectFeature = async (event: MapLayerMouseEvent | MapLayerTouchEvent) => {
+        const feature = event.features?.[0] ?? map.queryRenderedFeatures(event.point, { layers: [LGA_FILL_LAYER] })[0]
+        if (!feature) return
+        const lgaId = getFeatureId(feature)
+        if (!lgaId) return
+        const fallback = lgaLookupRef.current.get(lgaId) ?? (feature as unknown as LgaFeature)
+        const fullFeature = await fetchFullLgaFeature(lgaId, fallback)
+        lgaLookupRef.current.set(lgaId, fullFeature)
+        onLgaSelect(fullFeature)
+        const bounds = geometryBounds(fullFeature.geometry)
+        if (bounds) map.fitBounds(bounds, { padding: 48, maxZoom: 13 })
+      }
+
+      map.on('click', LGA_FILL_LAYER, selectFeature)
+      map.on('touchend', LGA_FILL_LAYER, selectFeature)
+      map.on('mouseenter', LGA_FILL_LAYER, () => { map.getCanvas().style.cursor = 'pointer' })
+      map.on('mouseleave', LGA_FILL_LAYER, () => { map.getCanvas().style.cursor = '' })
+    }
+
+    map.on('style.load', addLgaLayers)
+    if (map.isStyleLoaded()) addLgaLayers()
+    else map.once('load', addLgaLayers)
+
+    return () => {
+      map.off('style.load', addLgaLayers)
+    }
+  }, [usingPmtiles, geojsonData, onLgaSelect])
+
+  useEffect(() => {
+    if (!data) return
+    lgaLookupRef.current = new Map(
+      data.features
+        .filter((feature): feature is LgaFeature => Boolean(feature.properties?.lga_id))
+        .map(feature => [String(feature.properties.lga_id), feature])
+    )
+    const source = mapRef.current?.getSource(LGA_SOURCE) as GeoJSONSource | undefined
+    if (source && !usingPmtiles) source.setData(data)
+  }, [data, usingPmtiles])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !map.getLayer(LGA_FILL_LAYER)) return
+    map.setPaintProperty(LGA_FILL_LAYER, 'fill-color', symbology?.solidColor ?? '#3b82f6')
+    map.setPaintProperty(LGA_FILL_LAYER, 'fill-opacity', activeTileLayer ? 0.05 : symbology?.fillOpacity ?? 0.7)
+    map.setPaintProperty(LGA_LINE_LAYER, 'line-color', symbology?.strokeColor ?? '#666666')
+    map.setPaintProperty(LGA_LINE_LAYER, 'line-width', activeTileLayer ? 0.3 : symbology?.strokeWeight ?? 1)
   }, [symbology, activeTileLayer])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !map.getLayer(LGA_SELECTED_LAYER)) return
+    map.setFilter(LGA_SELECTED_LAYER, ['==', ['get', 'lga_id'], selectedLgaId ?? ''])
+  }, [selectedLgaId])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map) return
+    const applyStyle = () => map.setStyle(getBasemapStyle(basemap))
+    if (map.isStyleLoaded()) applyStyle()
+    else map.once('load', applyStyle)
+  }, [basemap])
 
   useEffect(() => {
     const map = mapRef.current
@@ -80,7 +298,6 @@ export default function MapView({ onLgaSelect, activeTileLayer, symbology, basem
       geeLayerRef.current.remove()
       geeLayerRef.current = null
     }
-
     if (!activeTileLayer?.bbox) return
 
     const { url, bbox, lgaGeometry } = activeTileLayer
@@ -88,44 +305,40 @@ export default function MapView({ onLgaSelect, activeTileLayer, symbology, basem
 
     if (lgaGeometry) {
       const svgEl = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
-      svgEl.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:500;'
+      svgEl.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:2;'
 
       const updateSvg = () => {
-        const size = map.getSize()
-        svgEl.setAttribute('width', String(size.x))
-        svgEl.setAttribute('height', String(size.y))
+        const canvas = map.getCanvas()
+        svgEl.setAttribute('width', String(canvas.clientWidth))
+        svgEl.setAttribute('height', String(canvas.clientHeight))
 
-        const clipId = 'lga-clip'
         const coordsToD = (coords: number[][]): string =>
-          coords.map((c, i) => {
-            const pt = map.latLngToContainerPoint(L.latLng(c[1], c[0]))
+          coords.map((coord, i) => {
+            const pt = map.project([coord[0], coord[1]])
             return `${i === 0 ? 'M' : 'L'}${pt.x.toFixed(1)},${pt.y.toFixed(1)}`
           }).join(' ') + ' Z'
 
         let pathD = ''
         if (lgaGeometry.type === 'Polygon') {
-          ;(lgaGeometry as GeoJSON.Polygon).coordinates.forEach(ring => { pathD += coordsToD(ring) + ' ' })
+          lgaGeometry.coordinates.forEach(ring => { pathD += coordsToD(ring) + ' ' })
         } else if (lgaGeometry.type === 'MultiPolygon') {
-          ;(lgaGeometry as GeoJSON.MultiPolygon).coordinates.forEach(poly =>
-            poly.forEach(ring => { pathD += coordsToD(ring) + ' ' })
-          )
+          lgaGeometry.coordinates.forEach(poly => poly.forEach(ring => { pathD += coordsToD(ring) + ' ' }))
         }
 
-        const imgBounds = L.latLngBounds([[bbox.south, bbox.west], [bbox.north, bbox.east]])
-        const tl = map.latLngToContainerPoint(imgBounds.getNorthWest())
-        const br = map.latLngToContainerPoint(imgBounds.getSouthEast())
+        const topLeft = map.project([bbox.west, bbox.north])
+        const bottomRight = map.project([bbox.east, bbox.south])
 
         svgEl.innerHTML = `
           <defs>
-            <clipPath id="${clipId}">
+            <clipPath id="lga-raster-clip">
               <path d="${pathD}" fill-rule="evenodd"/>
             </clipPath>
           </defs>
           <image
             href="${imageUrl}"
-            x="${tl.x}" y="${tl.y}"
-            width="${br.x - tl.x}" height="${br.y - tl.y}"
-            clip-path="url(#${clipId})"
+            x="${topLeft.x}" y="${topLeft.y}"
+            width="${bottomRight.x - topLeft.x}" height="${bottomRight.y - topLeft.y}"
+            clip-path="url(#lga-raster-clip)"
             opacity="0.85"
             preserveAspectRatio="none"
           />
@@ -133,66 +346,52 @@ export default function MapView({ onLgaSelect, activeTileLayer, symbology, basem
       }
 
       updateSvg()
-      map.on('move zoom moveend zoomend', updateSvg)
-      map.getContainer().appendChild(svgEl)
-
+      map.on('move', updateSvg)
+      map.on('zoom', updateSvg)
+      map.on('resize', updateSvg)
+      map.getCanvasContainer().appendChild(svgEl)
       geeLayerRef.current = {
         remove: () => {
           svgEl.remove()
-          map.off('move zoom moveend zoomend', updateSvg)
-        }
+          map.off('move', updateSvg)
+          map.off('zoom', updateSvg)
+          map.off('resize', updateSvg)
+        },
       }
-    } else {
-      const bounds: L.LatLngBoundsExpression = [[bbox.south, bbox.west], [bbox.north, bbox.east]]
-      const overlay = L.imageOverlay(imageUrl, bounds, { opacity: 0.85, zIndex: 500 })
-      overlay.addTo(map)
-      overlay.bringToFront()
-      geeLayerRef.current = overlay
+      return
     }
+
+    const addRaster = () => {
+      if (map.getLayer(RASTER_LAYER)) map.removeLayer(RASTER_LAYER)
+      if (map.getSource(RASTER_SOURCE)) map.removeSource(RASTER_SOURCE)
+      map.addSource(RASTER_SOURCE, {
+        type: 'image',
+        url: imageUrl,
+        coordinates: [
+          [bbox.west, bbox.north],
+          [bbox.east, bbox.north],
+          [bbox.east, bbox.south],
+          [bbox.west, bbox.south],
+        ],
+      })
+      map.addLayer({
+        id: RASTER_LAYER,
+        type: 'raster',
+        source: RASTER_SOURCE,
+        paint: { 'raster-opacity': 0.85 },
+      }, map.getLayer(LGA_FILL_LAYER) ? LGA_FILL_LAYER : undefined)
+      geeLayerRef.current = {
+        remove: () => {
+          if (map.getLayer(RASTER_LAYER)) map.removeLayer(RASTER_LAYER)
+          if (map.getSource(RASTER_SOURCE)) map.removeSource(RASTER_SOURCE)
+        },
+      }
+    }
+
+    if (map.isStyleLoaded()) addRaster()
+    else map.once('load', addRaster)
   }, [activeTileLayer])
 
-
-  // Swap basemap tiles when basemap prop changes
-  const TILE_URLS: Record<BasemapType, { url: string; attribution: string; maxZoom?: number }> = {
-    map: {
-      url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-      attribution: '© OpenStreetMap contributors',
-    },
-    satellite: {
-      url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-      attribution: '© Esri, Maxar, Earthstar Geographics',
-      maxZoom: 19,
-    },
-    hybrid: {
-      url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-      attribution: '© Esri, Maxar, Earthstar Geographics',
-      maxZoom: 19,
-    },
-  }
-
-  useEffect(() => {
-    const map = mapRef.current
-    if (!map) return
-    if (basemapLayerRef.current) {
-      basemapLayerRef.current.remove()
-    }
-    const cfg = TILE_URLS[basemap]
-    basemapLayerRef.current = L.tileLayer(cfg.url, {
-      attribution: cfg.attribution,
-      maxZoom: cfg.maxZoom ?? 18,
-    })
-    basemapLayerRef.current.addTo(map)
-    basemapLayerRef.current.bringToBack()
-
-    // For hybrid: add a labels overlay on top
-    if (basemap === 'hybrid') {
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        opacity: 0.4,
-        attribution: '',
-      }).addTo(map)
-    }
-  }, [basemap])
-
   if (isError) return <div>Failed to load LGA boundaries.</div>
-  return <div id="map" style={{ height: '100%', width: '100%' }} />
+  return <div ref={containerRef} className="heat-map" />
 }
